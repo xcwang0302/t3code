@@ -7,12 +7,15 @@ import {
   ThreadFolderId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as DateTime from "effect/DateTime";
 import * as TestClock from "effect/testing/TestClock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
@@ -150,7 +153,7 @@ const suggestionLayer = Layer.mergeAll(
 );
 
 const layer = ThreadFolderService.layer.pipe(
-  Layer.provide(Layer.merge(projectionLayer, suggestionLayer)),
+  Layer.provide(Layer.mergeAll(projectionLayer, suggestionLayer, NodeServices.layer)),
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
 
@@ -706,4 +709,59 @@ it.effect("files validated title picks and batches only eligible smart threads",
     assert.match(switched.message, /changed while threads were sorted/);
     assert.notInclude((yield* folders.list()).folders[0]!.threadIds, other);
   }).pipe(Effect.provide(layer)),
+);
+
+it.effect("binds a folder to an existing directory and unbinds it", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-folder-root-" });
+    const file = path.join(directory, "notes.txt");
+    yield* fileSystem.writeFileString(file, "not a directory");
+    const folders = yield* ThreadFolderService.ThreadFolderService;
+    const rootOf = (folderId: ThreadFolderId) =>
+      folders
+        .list()
+        .pipe(
+          Effect.map(
+            (result) => result.folders.find((folder) => folder.id === folderId)?.workspaceRoot,
+          ),
+        );
+
+    // A trailing separator is dropped, so the root matches the project's workspace root.
+    yield* folders.mutate({
+      type: "folder.create",
+      folderId: web,
+      name: "Web",
+      workspaceRoot: `${directory}${path.sep}`,
+    });
+    assert.strictEqual(yield* rootOf(web), directory);
+    yield* folders.mutate({ type: "folder.create", folderId: fixes, name: "Fixes" });
+    assert.strictEqual(yield* rootOf(fixes), null);
+
+    const relative = yield* folders
+      .mutate({ type: "folder.update", folderId: fixes, workspaceRoot: "code/web" })
+      .pipe(Effect.flip);
+    assert.match(relative.message, /absolute path/);
+    const missing = yield* folders
+      .mutate({
+        type: "folder.update",
+        folderId: fixes,
+        workspaceRoot: path.join(directory, "missing"),
+      })
+      .pipe(Effect.flip);
+    assert.match(missing.message, /does not exist/);
+    const notDirectory = yield* folders
+      .mutate({ type: "folder.update", folderId: fixes, workspaceRoot: file })
+      .pipe(Effect.flip);
+    assert.match(notDirectory.message, /not a directory/);
+    // A rejected directory leaves the folder as it was.
+    assert.strictEqual(yield* rootOf(fixes), null);
+
+    // Other edits keep the binding; null clears it.
+    yield* folders.mutate({ type: "folder.update", folderId: web, name: "Website" });
+    assert.strictEqual(yield* rootOf(web), directory);
+    yield* folders.mutate({ type: "folder.update", folderId: web, workspaceRoot: null });
+    assert.strictEqual(yield* rootOf(web), null);
+  }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer))),
 );

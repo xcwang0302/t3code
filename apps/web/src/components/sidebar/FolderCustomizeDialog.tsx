@@ -10,6 +10,10 @@ import {
   projectIconColorClassName,
   projectIconFromDraft,
 } from "../../projectIconOptions";
+import { readLocalApi } from "../../localApi";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useProjects } from "../../state/entities";
+import { findThreadFolderProject } from "../../state/threadFolderLaunch";
 import { mutateThreadFolders } from "../../state/threadFolders";
 import { ProjectIconOverrideGlyph } from "../ProjectFavicon";
 import { ProjectIconPicker } from "../settings/ProjectIconPickerDialog";
@@ -120,11 +124,35 @@ function FolderCustomizeBody({
   const [iconDraft, setIconDraft] = useState(() =>
     initialProjectIconDraft(folder.icon, folder.name),
   );
+  const [workspaceRoot, setWorkspaceRoot] = useState(folder.workspaceRoot ?? "");
   const [saving, setSaving] = useState(false);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const projects = useProjects();
+  // The native picker browses this machine, so it only fits folders on the local environment.
+  const canPickDirectory =
+    typeof window !== "undefined" &&
+    window.desktopBridge !== undefined &&
+    folder.environmentId === primaryEnvironmentId;
 
   const icon = hasIcon ? projectIconFromDraft(iconDraft) : null;
   const iconInvalid = hasIcon && icon === null;
-  const update = buildFolderUpdate(folder, { name, icon });
+  const update = buildFolderUpdate(folder, { name, icon, workspaceRoot });
+  const typedRoot = workspaceRoot.trim();
+  const rootHasProject =
+    typedRoot === "" ||
+    findThreadFolderProject(
+      { environmentId: folder.environmentId, workspaceRoot: typedRoot },
+      projects,
+    ) !== null;
+
+  const pickDirectory = async () => {
+    const api = readLocalApi();
+    if (!api) return;
+    const picked = await api.dialogs
+      .pickFolder(typedRoot ? { initialPath: typedRoot } : undefined)
+      .catch(() => null);
+    if (picked) setWorkspaceRoot(picked);
+  };
   const nameInvalid = name.trim() === "";
 
   const save = async () => {
@@ -149,7 +177,7 @@ function FolderCustomizeBody({
           <T>Customize folder</T>
         </DialogTitle>
         <DialogDescription>
-          <T>Change the folder's name, icon, and color.</T>
+          <T>Change the folder's name, icon, color, and working directory.</T>
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
@@ -165,6 +193,37 @@ function FolderCustomizeBody({
             autoComplete="off"
             onChange={(event) => setName(event.currentTarget.value)}
           />
+        </Field>
+        <Field
+          label={gt("Working directory", { $context: "folder directory field" })}
+          htmlFor="folder-customize-workspace-root"
+        >
+          <div className="flex gap-2">
+            <Input
+              id="folder-customize-workspace-root"
+              className="min-w-0 flex-1"
+              value={workspaceRoot}
+              placeholder={gt("None: threads open in their own project")}
+              spellCheck={false}
+              autoComplete="off"
+              onChange={(event) => setWorkspaceRoot(event.currentTarget.value)}
+            />
+            {canPickDirectory ? (
+              <Button variant="outline" size="sm" onClick={() => void pickDirectory()}>
+                <T>Choose…</T>
+              </Button>
+            ) : null}
+          </div>
+          <p className="text-muted-foreground text-xs">
+            {rootHasProject ? (
+              <T>New threads started from this folder work in this directory.</T>
+            ) : (
+              <T>
+                This directory is not a project yet. Add it as a project before starting threads
+                from this folder.
+              </T>
+            )}
+          </p>
         </Field>
         <ProjectIconPicker
           draft={iconDraft}

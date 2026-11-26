@@ -33,6 +33,7 @@ const folder = (
   rule: null,
   autoFile: false,
   ruleSetAt: null,
+  workspaceRoot: null,
   pinnedAt: null,
   threadIds: threadIds.map((id) => ThreadId.make(id)),
   createdAt: "2026-01-01T00:00:00.000Z",

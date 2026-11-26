@@ -22,6 +22,11 @@ export const ensureThreadFolderSchema = Effect.gen(function* () {
       pinned_at TEXT
     )
   `;
+  // Added after the table shipped, so existing databases gain it in place.
+  const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(thread_folders)`;
+  if (!columns.some((column) => column.name === "workspace_root")) {
+    yield* sql`ALTER TABLE thread_folders ADD COLUMN workspace_root TEXT`;
+  }
   yield* sql`
     CREATE TABLE IF NOT EXISTS thread_folder_members (
       thread_id TEXT PRIMARY KEY,

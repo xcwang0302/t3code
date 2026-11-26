@@ -17,6 +17,16 @@ export const MAX_THREAD_FOLDER_MOVE_THREADS = 100;
 
 export const ThreadFolderName = TrimmedNonEmptyString.check(Schema.isMaxLength(80));
 
+const MAX_THREAD_FOLDER_WORKSPACE_ROOT_LENGTH = 4096;
+
+/**
+ * An absolute directory on the folder's environment. "New thread here" starts a thread in the
+ * project whose workspace root is this directory, then files it into the folder.
+ */
+export const ThreadFolderWorkspaceRoot = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(MAX_THREAD_FOLDER_WORKSPACE_ROOT_LENGTH),
+);
+
 export const MAX_THREAD_FOLDER_RULE_PATTERN_LENGTH = 200;
 
 const ThreadFolderRulePattern = TrimmedNonEmptyString.check(
@@ -56,6 +66,10 @@ export const ThreadFolder = Schema.Struct({
   ruleSetAt: Schema.NullOr(IsoDateTime),
   /** A pinned folder stays on top, above unpinned ones, whatever its threads are doing. */
   pinnedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /** The directory new threads from this folder work in, or null when the folder has none. */
+  workspaceRoot: Schema.NullOr(ThreadFolderWorkspaceRoot).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -83,6 +97,7 @@ export const ThreadFolderMutation = Schema.Union([
     threadIds: Schema.optional(ThreadFolderMoveThreadIds),
     rule: Schema.optional(Schema.NullOr(ThreadFolderRule)),
     autoFile: Schema.optional(Schema.Boolean),
+    workspaceRoot: Schema.optional(Schema.NullOr(ThreadFolderWorkspaceRoot)),
   }),
   Schema.Struct({
     type: Schema.Literal("folder.update"),
@@ -92,6 +107,8 @@ export const ThreadFolderMutation = Schema.Union([
     rule: Schema.optional(Schema.NullOr(ThreadFolderRule)),
     autoFile: Schema.optional(Schema.Boolean),
     pinned: Schema.optional(Schema.Boolean),
+    // null unbinds the folder from its directory.
+    workspaceRoot: Schema.optional(Schema.NullOr(ThreadFolderWorkspaceRoot)),
   }),
   Schema.Struct({
     type: Schema.Literal("folder.reorder"),

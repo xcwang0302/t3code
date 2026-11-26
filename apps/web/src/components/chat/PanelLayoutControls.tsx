@@ -1,10 +1,12 @@
 import {
+  Columns2Icon,
   PanelBottomIcon,
   PanelRightIcon,
   SquareMenuIcon,
   Maximize2Icon,
   Minimize2Icon,
 } from "lucide-react";
+import { Button } from "../ui/button";
 import { useGT } from "gt-react";
 import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
 
@@ -20,6 +22,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 const THREAD_PANEL_HEADER_INSET_PX = 12;
 
 export interface PanelLayoutControlsProps {
+  /** Starts a new thread beside this one. */
+  onSplitWithNewThread?: (() => void) | undefined;
   showThreadPanelControl?: boolean;
   showTerminalControl?: boolean;
   showRightPanelControl?: boolean;
@@ -57,6 +61,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleTerminal,
   onToggleThreadPanel,
   onToggleRightPanel,
+  onSplitWithNewThread,
 }: PanelLayoutControlsProps) {
   const gt = useGT();
   const threadPanelToggle = (
@@ -93,6 +98,24 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
+      {onSplitWithNewThread ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0 [-webkit-app-region:no-drag]"
+                aria-label={gt("Split view with a new thread")}
+                onClick={onSplitWithNewThread}
+              />
+            }
+          >
+            <Columns2Icon className="size-4" />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">{gt("Split view with a new thread")}</TooltipPopup>
+        </Tooltip>
+      ) : null}
       {showThreadPanelControl ? threadPanelControl : null}
       {showTerminalControl ? (
         <Tooltip>
@@ -192,7 +215,12 @@ export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
       )}
       data-workspace-titlebar-controls
     >
-      <PanelLayoutControls {...props} showTerminalControl={false} showRightPanelControl={false} />
+      <PanelLayoutControls
+        {...props}
+        onSplitWithNewThread={undefined}
+        showTerminalControl={false}
+        showRightPanelControl={false}
+      />
     </div>
   );
 }

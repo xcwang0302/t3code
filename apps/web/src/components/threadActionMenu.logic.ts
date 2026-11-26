@@ -10,6 +10,7 @@ import type { BoardMenuId } from "../hooks/boardMenu";
 export type ThreadActionMenuId =
   | "find"
   | "new-thread-on-branch"
+  | "open-in-split"
   | "filter-by-project"
   | "turn-into-project"
   | "project-settings"
@@ -101,6 +102,8 @@ export function buildDraftActionMenuItems(
 export interface ThreadActionMenuState {
   readonly canOperate: boolean;
   readonly canFind?: boolean;
+  /** Another thread of the same environment is open in the main view to show this one beside. */
+  readonly canOpenInSplit?: boolean;
   readonly branch: string | null;
   readonly projectFilter: {
     readonly label: string;
@@ -135,6 +138,7 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
   return ![
     "find",
     "new-thread-on-branch",
+    "open-in-split",
     "project-settings",
     "mark-unread",
     "share-guest",
@@ -160,6 +164,15 @@ export function buildThreadActionMenuItems(
             id: "new-thread-on-branch" as const,
             label: resolve(msg("New thread on {branch}", { branch: state.branch })),
             icon: "message-square-plus",
+          },
+        ]
+      : []),
+    ...(state.canOpenInSplit
+      ? [
+          {
+            id: "open-in-split" as const,
+            label: resolve(msg("Open in split view")),
+            icon: "message-square",
           },
         ]
       : []),

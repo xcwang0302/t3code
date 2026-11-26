@@ -22,7 +22,7 @@ import {
   PlusIcon,
   XIcon,
 } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -36,6 +36,8 @@ import {
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useAllSideTasks } from "../../state/threadSideTasks";
+import { THREAD_CONTEXT_DROP_EVENT, threadContextDropTargetProps } from "../chat/threadContextDrag";
+import type { ThreadContextDropRef } from "../chat/threadContextDrop.logic";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -51,6 +53,7 @@ import { BoardCalendar } from "./BoardCalendar";
 import { BoardCardDetail } from "./BoardCardDetail";
 import { BoardCardItem, ProjectDot } from "./BoardCardItem";
 import { BoardSuggestions } from "./BoardSuggestions";
+import { dropThreadsOnBoardColumn } from "./boardThreadDrop";
 import { cardKeyString, sameCardKey, useBoardUiStore } from "./boardUiStore";
 import { BOARD_COLUMN_DOT, useBoardColumnLabels } from "./useBoardColumnLabels";
 
@@ -93,18 +96,40 @@ function DraggableCard({
 function ColumnDropArea({
   column,
   className,
+  onDropThreads,
   children,
 }: {
   readonly column: BoardColumn;
   readonly className?: string;
+  /** Threads dragged out of the sidebar and let go over this column. */
+  readonly onDropThreads: (refs: ReadonlyArray<ThreadContextDropRef>) => void;
   readonly children: ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: `column|${column}` });
+  const nodeRef = useRef<HTMLDivElement | null>(null);
+  const handleDropThreads = useEffectEvent(onDropThreads);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes the column element to thread drops, which arrive as DOM events from the sidebar's drag
+  useEffect(() => {
+    const node = nodeRef.current;
+    if (!node) return;
+    const listener = (event: Event) =>
+      handleDropThreads((event as CustomEvent<ReadonlyArray<ThreadContextDropRef>>).detail);
+    node.addEventListener(THREAD_CONTEXT_DROP_EVENT, listener);
+    return () => node.removeEventListener(THREAD_CONTEXT_DROP_EVENT, listener);
+  }, []);
   return (
     <div
-      ref={setNodeRef}
+      ref={(node) => {
+        nodeRef.current = node;
+        setNodeRef(node);
+      }}
       data-board-column={column}
-      className={cn(className, isOver && "ring-2 ring-primary/40 ring-inset")}
+      {...threadContextDropTargetProps()}
+      className={cn(
+        className,
+        "data-[thread-context-over]:ring-2 data-[thread-context-over]:ring-primary/40 data-[thread-context-over]:ring-inset",
+        isOver && "ring-2 ring-primary/40 ring-inset",
+      )}
     >
       {children}
     </div>
@@ -223,6 +248,9 @@ export function BoardView({
       gt("Could not add the card"),
     );
   };
+
+  const dropThreads = (refs: ReadonlyArray<ThreadContextDropRef>, column: BoardColumn) =>
+    void dropThreadsOnBoardColumn(refs, column, ui.selectedDay);
 
   const cardByDragId = (id: string) => {
     const key = id.slice(id.indexOf("|") + 1);
@@ -540,6 +568,7 @@ export function BoardView({
             key={column}
             column={column}
             className="flex min-h-0 min-w-0 flex-col gap-2 rounded-xl bg-muted/60 p-2"
+            onDropThreads={(refs) => dropThreads(refs, column)}
           >
             {columnHeader(column)}
             <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pb-4">
@@ -554,7 +583,12 @@ export function BoardView({
     ) : (
       <div className="flex flex-col gap-3">
         {BOARD_COLUMN_ORDER.map((column) => (
-          <ColumnDropArea key={column} column={column} className="flex flex-col gap-1.5 rounded-lg">
+          <ColumnDropArea
+            key={column}
+            column={column}
+            className="flex flex-col gap-1.5 rounded-lg"
+            onDropThreads={(refs) => dropThreads(refs, column)}
+          >
             {columnHeader(column)}
             {column === "todo" ? suggestionsBlock : null}
             {renderCards(column)}

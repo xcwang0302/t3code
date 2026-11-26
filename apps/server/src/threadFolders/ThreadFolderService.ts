@@ -25,8 +25,10 @@ import * as Arr from "effect/Array";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -72,6 +74,7 @@ interface FolderRow {
   readonly auto_file: number;
   readonly rule_set_at: string | null;
   readonly pinned_at: string | null;
+  readonly workspace_root: string | null;
   readonly created_at: string;
   readonly updated_at: string;
 }
@@ -107,10 +110,37 @@ const make = Effect.gen(function* () {
   // Notifications re-emit the full list; slow subscribers need only the newest dirty signal.
   const changes = yield* PubSub.sliding<void>(1);
   const writes = yield* Semaphore.make(1);
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  /** Normalizes a folder's directory and checks it is an existing directory on this machine. */
+  const resolveWorkspaceRoot = Effect.fn("ThreadFolderService.resolveWorkspaceRoot")(function* (
+    workspaceRoot: string,
+  ) {
+    if (!path.isAbsolute(workspaceRoot)) {
+      return yield* folderError(`The folder directory must be an absolute path: ${workspaceRoot}`);
+    }
+    const normalized = path.normalize(workspaceRoot);
+    const root = path.parse(normalized).root;
+    const resolved =
+      normalized.length > root.length ? normalized.replace(/[\\/]+$/, "") : normalized;
+    const info = yield* fileSystem
+      .stat(resolved)
+      .pipe(
+        Effect.mapError((cause) =>
+          folderError(`The folder directory does not exist: ${resolved}`, { cause }),
+        ),
+      );
+    if (info.type !== "Directory") {
+      return yield* folderError(`The folder directory is not a directory: ${resolved}`);
+    }
+    return resolved;
+  });
 
   const readFolders = Effect.gen(function* () {
     const rows = yield* sql<FolderRow>`
-      SELECT folder_id, name, icon_json, rule_json, auto_file, rule_set_at, pinned_at, created_at, updated_at
+      SELECT folder_id, name, icon_json, rule_json, auto_file, rule_set_at, pinned_at, workspace_root,
+        created_at, updated_at
       FROM thread_folders
       ORDER BY sort_key ASC, created_at ASC, rowid ASC
     `;
@@ -135,6 +165,7 @@ const make = Effect.gen(function* () {
       autoFile: row.auto_file !== 0,
       ruleSetAt: row.rule_set_at,
       pinnedAt: row.pinned_at,
+      workspaceRoot: row.workspace_root,
       threadIds: threadIdsByFolder.get(row.folder_id) ?? [],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -339,7 +370,7 @@ const make = Effect.gen(function* () {
         `;
         yield* requireLiveThreads(mutation.threadIds ?? []);
         yield* sql`
-          INSERT INTO thread_folders (folder_id, name, icon_json, sort_key, rule_json, auto_file, rule_set_at, created_at, updated_at)
+          INSERT INTO thread_folders (folder_id, name, icon_json, sort_key, rule_json, auto_file, rule_set_at, workspace_root, created_at, updated_at)
           VALUES (
             ${mutation.folderId},
             ${mutation.name},
@@ -348,6 +379,7 @@ const make = Effect.gen(function* () {
             ${rule === null ? null : encodeRule(rule)},
             ${Number(mutation.autoFile ?? false)},
             ${rule === null ? null : now},
+            ${mutation.workspaceRoot ?? null},
             ${now},
             ${now}
           )
@@ -400,6 +432,15 @@ const make = Effect.gen(function* () {
             UPDATE thread_folders
             SET icon_json = ${mutation.icon === null ? null : encodeIcon(mutation.icon)},
               updated_at = ${now}
+            WHERE folder_id = ${mutation.folderId}
+          `;
+        }
+        if (
+          mutation.workspaceRoot !== undefined &&
+          mutation.workspaceRoot !== current.workspaceRoot
+        ) {
+          yield* sql`
+            UPDATE thread_folders SET workspace_root = ${mutation.workspaceRoot}, updated_at = ${now}
             WHERE folder_id = ${mutation.folderId}
           `;
         }
@@ -475,7 +516,13 @@ const make = Effect.gen(function* () {
   });
 
   const mutate: ThreadFolderService["Service"]["mutate"] = Effect.fn("ThreadFolderService.mutate")(
-    function* (mutation, options) {
+    function* (requested, options) {
+      // Checked before the write, so a missing directory fails without touching the folder.
+      const mutation: ThreadFolderMutation =
+        (requested.type === "folder.create" || requested.type === "folder.update") &&
+        requested.workspaceRoot != null
+          ? { ...requested, workspaceRoot: yield* resolveWorkspaceRoot(requested.workspaceRoot) }
+          : requested;
       let smart: Parameters<typeof apply>[2];
       if (mutation.type === "folder.applyRule") {
         const folder = (yield* list()).folders.find((entry) => entry.id === mutation.folderId);

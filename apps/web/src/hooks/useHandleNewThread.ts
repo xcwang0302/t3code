@@ -50,6 +50,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
+import { type PendingThreadFolder, setPendingThreadFolder } from "../state/pendingThreadFolders";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
@@ -92,7 +93,7 @@ export function createNewThreadHandler(router: AnyRouter) {
     return resolveThreadRouteTarget(currentRouteParams);
   };
 
-  return (
+  const openDraft = (
     projectRef: ScopedProjectRef,
     options?: {
       branch?: string | null;
@@ -442,6 +443,22 @@ export function createNewThreadHandler(router: AnyRouter) {
       });
       return { draftId, threadId };
     })();
+  };
+
+  return async (
+    projectRef: ScopedProjectRef,
+    options?: Parameters<typeof openDraft>[1] & {
+      /**
+       * The folder the draft was opened from; its thread is filed there on first send. Any other
+       * new-thread request for the same draft clears it, so only a folder's own entry files.
+       */
+      threadFolder?: PendingThreadFolder;
+    },
+  ): Promise<{ draftId: DraftId; threadId: ThreadId } | null> => {
+    const { threadFolder, ...draftOptions } = options ?? {};
+    const opened = await openDraft(projectRef, draftOptions);
+    if (opened) setPendingThreadFolder(opened.threadId, threadFolder ?? null);
+    return opened;
   };
 }
 

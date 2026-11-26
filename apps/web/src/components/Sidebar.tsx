@@ -19,6 +19,7 @@ import {
   readEnvironmentSupportsThreadFolders,
   requestThreadFolderRename,
 } from "../state/threadFolders";
+import { findThreadFolderProject } from "../state/threadFolderLaunch";
 import {
   buildMoveToFolderMenuItem,
   buildMultiSelectFolderMenuItems,
@@ -172,6 +173,7 @@ import {
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useOrderWhileOpen } from "../hooks/useOrderWhileOpen";
 import { useProjectPin } from "../hooks/useProjectGroupUpdate";
+import { useRemoveProjectMembers } from "../hooks/useRemoveProjectMembers";
 import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
@@ -210,6 +212,7 @@ import {
   resolveActiveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
+import { useSplitThreadStore } from "../splitThreadStore";
 import type { SidebarThreadSummary } from "../types";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { cn } from "~/lib/utils";
@@ -1415,9 +1418,36 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       openProjectSettings(projectGroup);
     },
   );
+  const removeProjectMembers = useRemoveProjectMembers();
   const startThreadInProjectFolder = useStableCallback((group: SidebarProjectSnapshot) => {
     if (isMobile) setOpenMobile(false);
     void handleNewThread(scopeProjectRef(group.environmentId, group.id));
+  });
+  // A folder's directory must already be a project; the person adds it, so nothing is created here.
+  const startThreadInThreadFolder = useStableCallback((folder: EnvironmentThreadFolder) => {
+    if (folder.workspaceRoot === null) return;
+    const project = findThreadFolderProject(folder);
+    if (project === null) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: gt("Add this directory as a project first"),
+          description: gt(
+            "{directory} is not a project yet. Add it, then start the thread from the folder again.",
+            { directory: folder.workspaceRoot },
+          ),
+          actionProps: {
+            children: gt("Add project"),
+            onClick: () => openAddProjectCommandPalette(),
+          },
+        }),
+      );
+      return;
+    }
+    if (isMobile) setOpenMobile(false);
+    void handleNewThread(scopeProjectRef(project.environmentId, project.id), {
+      threadFolder: { environmentId: folder.environmentId, folderId: folder.id },
+    });
   });
   const handleProjectFolderContextMenu = useStableCallback(
     (
@@ -1441,6 +1471,24 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   ]
                 : []),
               { id: "project-settings", label: gt("Project settings"), icon: "settings" },
+              // The scratch project holds every "No project" thread, so it is never removed here.
+              ...(group.memberProjects.some((member) => member.isScratch)
+                ? []
+                : [
+                    {
+                      id: "remove-project",
+                      label:
+                        group.memberProjects.length > 1
+                          ? gt("Remove this project everywhere")
+                          : gt("Remove project"),
+                      icon: "trash",
+                      destructive: true,
+                      separatorBefore: true,
+                      disabled: !group.memberProjects.every((member) =>
+                        readEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope),
+                      ),
+                    },
+                  ]),
             ],
             position,
             source,
@@ -1460,6 +1508,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "project-settings":
             openProjectSettings(group);
+            return;
+          case "remove-project":
+            void removeProjectMembers({
+              group,
+              members: group.memberProjects,
+              allMembers: group.memberProjects,
+              hasOtherMembers: false,
+            });
             return;
         }
       })();
@@ -2918,6 +2974,16 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const clicked = await settlePromise(() =>
         api.contextMenu.show(
           [
+            ...(folder.workspaceRoot === null
+              ? []
+              : [
+                  {
+                    id: "new-thread",
+                    label: gt("New thread here", { $context: "start a thread in a folder" }),
+                    icon: "message-square-plus",
+                    disabled: !canOperate,
+                  },
+                ]),
             folder.pinnedAt != null
               ? { id: "unpin", label: gt("Unpin folder"), icon: "pin-off", disabled: !canOperate }
               : { id: "pin", label: gt("Pin folder"), icon: "pin", disabled: !canOperate },
@@ -3103,6 +3169,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         return;
       }
       switch (clicked.value) {
+        case "new-thread":
+          startThreadInThreadFolder(folder);
+          return;
         case "pin":
         case "unpin":
           void mutateThreadFolders(
@@ -3555,6 +3624,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 projectRef.projectId === thread.projectId,
             ),
           ) ?? null;
+        // The split shows a saved thread beside another saved thread of the same environment.
+        const splitHostRef =
+          routeThreadRef !== null &&
+          routeThreadKey !== null &&
+          routeThreadKey !== threadKey &&
+          routeThreadRef.environmentId === thread.environmentId &&
+          threadByKeyRef.current.has(routeThreadKey)
+            ? routeThreadRef
+            : null;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -3562,6 +3640,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 threadRef.environmentId,
                 AuthOrchestrationOperateScope,
               ),
+              canOpenInSplit: splitHostRef !== null,
               folderMenu: buildMoveToFolderMenuItem({
                 environmentId: thread.environmentId,
                 threadIds: [thread.id],
@@ -3661,6 +3740,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 environmentId: threadRef.environmentId,
                 projectId: thread.projectId,
               });
+            return;
+          case "open-in-split":
+            if (splitHostRef) useSplitThreadStore.getState().open(splitHostRef, thread.id);
             return;
           case "new-thread-on-branch": {
             const result = await settlePromise(() =>
@@ -4543,6 +4625,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               onToggle={handleToggleThreadFolder}
                               onRename={handleThreadFolderRename}
                               onContextMenu={handleThreadFolderContextMenu}
+                              onNewThread={startThreadInThreadFolder}
                             />,
                           );
                           const memberTint = threadFolderMemberClassName(

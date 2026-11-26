@@ -65,6 +65,19 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  it("offers the split view only when asked, and to read-only clients too", () => {
+    expect(buildThreadActionMenuItems(baseState).some((item) => item.id === "open-in-split")).toBe(
+      false,
+    );
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      canOpenInSplit: true,
+    });
+    expect(items[0]).toMatchObject({ id: "open-in-split" });
+    expect(items[0]?.disabled).toBeUndefined();
+  });
+
   it("places the folder menu after the snooze group and disables it without permission", () => {
     const folderMenu = {
       id: "folder" as const,

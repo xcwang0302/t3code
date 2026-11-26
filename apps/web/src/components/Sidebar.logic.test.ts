@@ -1766,6 +1766,7 @@ describe("foldSidebarThreadFolders", () => {
     rule: null,
     autoFile: false,
     ruleSetAt: null,
+    workspaceRoot: null,
     pinnedAt: null,
     threadIds: [...threadIds],
     createdAt: "2026-03-09T10:00:00Z",

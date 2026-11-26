@@ -11,7 +11,9 @@ import {
   CircleDotDashedIcon,
   FolderClosedIcon,
   FolderOpenIcon,
+  FolderSymlinkIcon,
   PinIcon,
+  SquarePenIcon,
   Undo2Icon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -262,6 +264,8 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
   onToggle: (folderKey: string) => void;
   onRename: (folder: EnvironmentThreadFolder, name: string) => void;
   onContextMenu: (folder: EnvironmentThreadFolder, position: { x: number; y: number }) => void;
+  /** Starts a thread in the folder's working directory; shown only when it has one. */
+  onNewThread: (folder: EnvironmentThreadFolder) => void;
 }) {
   const { folder, folderKey, collapsed, threads, onToggle } = props;
   const gt = useGT();
@@ -299,6 +303,9 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
     }),
     ...tally.map((entry) => messages(FOLDER_TALLY_LABEL[entry.status](entry.count))),
     ...(wakeLabel === null ? [] : [gt("wakes {time}", { time: wakeLabel })]),
+    ...(folder.workspaceRoot === null
+      ? []
+      : [gt("works in {directory}", { directory: folder.workspaceRoot })]),
     ...(pullRequestCount > 0
       ? [
           gt("{count, plural, one {{count} pull request} other {{count} pull requests}}", {
@@ -308,10 +315,11 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
       : []),
   ].join(", ");
   const showActions = !isRenaming && canOperate;
+  const canStartThread = showActions && folder.workspaceRoot !== null;
   // Hover swaps the numbers for the actions; an open snooze menu keeps them shown.
   const numbersClassName = cn(
     showActions &&
-      (props.settleAction !== null || props.snoozeAction !== null) &&
+      (props.settleAction !== null || props.snoozeAction !== null || canStartThread) &&
       "group-has-focus-visible/thread-folder:hidden group-hover/thread-folder:hidden",
     snoozeMenuOpen && "hidden",
   );
@@ -451,6 +459,18 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
               <PinIcon aria-hidden className="size-3 shrink-0 opacity-60" />
             ) : null}
             <span className="min-w-0 truncate">{folder.name}</span>
+            {folder.workspaceRoot === null ? null : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={<span className="inline-flex shrink-0 items-center opacity-60" />}
+                >
+                  <FolderSymlinkIcon aria-hidden className="size-3" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">
+                  <span className="font-mono text-xs">{folder.workspaceRoot}</span>
+                </TooltipPopup>
+              </Tooltip>
+            )}
           </span>
         )}
         <span aria-hidden className={cn("flex shrink-0 items-center gap-2", numbersClassName)}>
@@ -491,6 +511,15 @@ export const SidebarThreadFolderHeader = memo(function SidebarThreadFolderHeader
             </span>
           ) : null}
         </span>
+        {canStartThread ? (
+          <FolderActionButton
+            label={gt("New thread in {directory}", { directory: folder.workspaceRoot! })}
+            className={actionClassName}
+            onPress={() => props.onNewThread(folder)}
+          >
+            <SquarePenIcon aria-hidden className="size-3.5" />
+          </FolderActionButton>
+        ) : null}
         {!showActions || props.snoozeAction === null ? null : props.snoozeAction === "snooze" ? (
           <SnoozeMenuButton
             open={snoozeMenuOpen}
