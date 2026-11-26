@@ -391,6 +391,8 @@ interface ManagedListeners {
 
 // Each still-image request owns a separate, short-lived rendering lease.
 type FrameCaptureConsumer = "picture-in-picture" | "recording" | symbol;
+/** The server waits on a tab's frames: a capture, a screencast, or its agent's running turn. */
+const SERVER_DRIVEN_CAPTURE = Symbol("server-driven");
 
 interface FrameCaptureSession {
   readonly recordingInputOptions?: RecordingInputOptions;
@@ -1811,9 +1813,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         cancelPickElement(tabId),
         closePictureInPicture(tabId),
         stopFrameCapture(tabId, "recording"),
+        stopFrameCapture(tabId, SERVER_DRIVEN_CAPTURE),
       ],
       {
-        concurrency: 3,
+        concurrency: 4,
         discard: true,
       },
     );
@@ -3635,6 +3638,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       if (tab && tab.capturing !== painting.active) {
         yield* update(tab.tabId, { capturing: painting.active });
+        // A minimized or covered window throttles the app and guest, which stalls those frames.
+        yield* (
+          painting.active
+            ? startFrameCapture(tab.tabId, SERVER_DRIVEN_CAPTURE)
+            : stopFrameCapture(tab.tabId, SERVER_DRIVEN_CAPTURE)
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Failed to change preview background throttling.", {
+              tabId: tab.tabId,
+              error,
+            }),
+          ),
+        );
       }
     },
   );

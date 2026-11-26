@@ -904,12 +904,13 @@ type FocusCandidate = {
   readonly isContentEditable?: boolean;
   readonly shadowRoot?: { readonly activeElement: FocusCandidate | null } | null;
   readonly focus?: () => void;
+  readonly select?: () => void;
   getRootNode(): { readonly activeElement?: FocusCandidate | null };
   contains(other: FocusCandidate): boolean;
 };
 
 // Serialized into the page's main world, so it must not reference module scope.
-const focusTextTarget = (target: FocusCandidate | null) => {
+const focusTextTarget = (target: FocusCandidate | null, selectAll?: boolean) => {
   let element =
     target ??
     (globalThis as unknown as { document: { activeElement: FocusCandidate | null } }).document
@@ -942,8 +943,28 @@ const focusTextTarget = (target: FocusCandidate | null) => {
   }
   element.focus?.();
   const active = element.getRootNode().activeElement;
-  return active != null && (active === element || element.contains(active));
+  const focused = active != null && (active === element || element.contains(active));
+  // Typed text then replaces the whole value.
+  if (focused && selectAll) {
+    if (element.select) element.select();
+    else
+      (
+        globalThis as unknown as {
+          getSelection(): { selectAllChildren(node: FocusCandidate): void } | null;
+        }
+      )
+        .getSelection()
+        ?.selectAllChildren(element);
+  }
+  return focused;
 };
+
+// Serialized into the page's main world. Playwright writes these values without typing them.
+const setsValueDirectly = (element: FocusCandidate) =>
+  element.tagName === "INPUT" &&
+  ["color", "date", "datetime-local", "month", "range", "time", "week"].includes(
+    element.type ?? "",
+  );
 
 // A `*:focus` locator needs Playwright's utility world, which some desktop tabs never get.
 const focusedTextField = async (page: Page, timeout: number) => {
@@ -967,16 +988,23 @@ const focusedTextField = async (page: Page, timeout: number) => {
 };
 
 export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
-  const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const deadline = Date.now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const remaining = () => Math.max(1, deadline - Date.now());
   const locator = targetLocator(page, input);
-  if (locator !== null && input.clear) {
-    await locator.fill(input.text, { timeout });
+  // Playwright's fill retries a rejected keystroke until its timeout, which hides why typing
+  // failed (a cross-site frame on an unfocused desktop tab, say), so it only writes values directly.
+  if (
+    locator !== null &&
+    input.clear &&
+    (await locator.evaluate(setsValueDirectly, undefined, { timeout: remaining() }))
+  ) {
+    await locator.fill(input.text, { timeout: remaining() });
     return;
   }
   const focused =
     locator === null
-      ? await focusedTextField(page, timeout)
-      : await locator.evaluate(focusTextTarget, undefined, { timeout });
+      ? await focusedTextField(page, remaining())
+      : await locator.evaluate(focusTextTarget, input.clear === true, { timeout: remaining() });
   if (focused !== true) {
     throw new ServerBrowserOperationError({
       tag: "PreviewAutomationTargetNotEditableError",
@@ -984,10 +1012,11 @@ export const type = async (page: Page, input: PreviewAutomationTypeInput) => {
     });
   }
   if (input.clear) {
-    await page.keyboard.press("ControlOrMeta+A");
-    await page.keyboard.press("Delete");
+    // A located field was selected when it was focused.
+    if (locator === null) await page.keyboard.press("ControlOrMeta+A");
+    if (locator === null || input.text === "") await page.keyboard.press("Delete");
   }
-  await page.keyboard.insertText(input.text);
+  if (input.text !== "") await page.keyboard.insertText(input.text);
 };
 
 export const hover = async (

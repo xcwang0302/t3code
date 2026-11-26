@@ -516,26 +516,33 @@ describe("DesktopBrowserHost", () => {
     }),
   );
 
-  it.effect("keeps a guest focused when its turn starts after the agent's first command", () =>
-    Effect.gen(function* () {
-      const host = yield* makeDrawnHost;
-      const debuggee = makeDebuggee();
-      host.attach(key, debuggee.tab);
-      const turn = (active: boolean) =>
-        host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
+  it.effect(
+    "keeps a guest focused and painting when its turn starts after the agent's first command",
+    () =>
+      Effect.gen(function* () {
+        const host = yield* makeDrawnHost;
+        const debuggee = makeDebuggee();
+        host.attach(key, debuggee.tab);
+        const painting = yield* watchPainting(host);
+        const turn = (active: boolean) =>
+          host.handleCommandLine(encodeJson({ type: "turn", threadId: key.threadId, active }));
 
-      yield* command(host, 1, "Input.dispatchKeyEvent");
-      yield* settle;
-      yield* turn(true);
-      debuggee.release();
-      yield* settle;
-      yield* TestClock.adjust("1 minute");
-      expect(debuggee.focusEmulation).toEqual([true]);
+        yield* command(host, 1, "Input.dispatchKeyEvent");
+        yield* settle;
+        expect(painting).toEqual([]);
+        yield* turn(true);
+        debuggee.release();
+        yield* settle;
+        yield* TestClock.adjust("1 minute");
+        expect(debuggee.focusEmulation).toEqual([true]);
+        // Painted through the turn, so a guest the panel hides still renders frames for the agent.
+        expect(painting).toEqual([true]);
 
-      yield* turn(false);
-      yield* TestClock.adjust("1 minute");
-      expect(debuggee.focusEmulation).toEqual([true, false]);
-    }),
+        yield* turn(false);
+        yield* TestClock.adjust("1 minute");
+        expect(debuggee.focusEmulation).toEqual([true, false]);
+        expect(painting).toEqual([true, false]);
+      }),
   );
 
   it.effect("lets a guest throttle through a turn that only sent it housekeeping", () =>
@@ -543,6 +550,7 @@ describe("DesktopBrowserHost", () => {
       const host = yield* makeDrawnHost;
       const debuggee = makeDebuggee();
       host.attach(key, debuggee.tab);
+      const painting = yield* watchPainting(host);
       yield* host.handleCommandLine(
         encodeJson({ type: "turn", threadId: key.threadId, active: true }),
       );
@@ -557,6 +565,7 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false]);
+      expect(painting).toEqual([]);
 
       yield* command(host, 2, "Runtime.evaluate");
       yield* settle;
@@ -564,6 +573,7 @@ describe("DesktopBrowserHost", () => {
       yield* settle;
       yield* TestClock.adjust("1 minute");
       expect(debuggee.focusEmulation).toEqual([true, false, true]);
+      expect(painting).toEqual([true]);
     }),
   );
 

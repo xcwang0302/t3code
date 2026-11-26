@@ -7,14 +7,23 @@ import { sendPageCommand, toKeyboardInputEvents } from "./GuestInput.ts";
 const makeGuest = ({
   focused,
   focusedDocument = true,
+  frameSessions = new Map<string, string>(),
 }: {
   readonly focused: boolean;
+  /** Whether focus sits in a document the page's own process reaches. */
   readonly focusedDocument?: boolean;
+  readonly frameSessions?: ReadonlyMap<string, string>;
 }) => {
-  const sendCommand = vi.fn(async (method: string, params?: { expression?: string }) =>
-    method === "Runtime.evaluate" && params?.expression?.endsWith("!== null")
-      ? { result: { value: focusedDocument } }
-      : { result: {} },
+  const sendCommand = vi.fn(
+    async (method: string, params?: { expression?: string }, sessionId?: string) => {
+      if (method === "DOM.describeNode") return { node: { frameId: "cross-site-frame" } };
+      if (method !== "Runtime.evaluate") return {};
+      if (params?.expression?.includes("execCommand")) return { result: { value: true } };
+      // The top document's focus ends at a frame element it cannot enter.
+      return sessionId === undefined && !focusedDocument
+        ? { result: { objectId: "frame-element" } }
+        : { result: {} };
+    },
   );
   const webContents = {
     focusedFrame: focused ? {} : null,
@@ -32,6 +41,8 @@ const makeGuest = ({
         { sendCommand } as unknown as Electron.Debugger,
         method,
         params,
+        undefined,
+        frameSessions,
       ),
   };
 };
@@ -264,12 +275,101 @@ describe("preview guest input", () => {
     },
   );
 
-  it("refuses input when a cross-site frame holds the unfocused page's focus", async () => {
+  it("refuses input when a cross-site frame without a known session holds the unfocused page's focus", async () => {
     const guest = makeGuest({ focused: false, focusedDocument: false });
     await expect(guest.send("Input.insertText", { text: "secret" })).rejects.toThrow(
       /cross-site frame/,
     );
     expect(guest.webContents.insertText).not.toHaveBeenCalled();
+  });
+
+  it("edits a focused cross-site frame in its own session, never as input the app could take", async () => {
+    const guest = makeGuest({
+      focused: false,
+      focusedDocument: false,
+      frameSessions: new Map([["cross-site-frame", "frame-session"]]),
+    });
+    const edits = () =>
+      guest.sendCommand.mock.calls.flatMap(([method, params, sessionId]) => {
+        const command = /execCommand\(("\w+"), false, (".*?")\)/.exec(params?.expression ?? "");
+        return method === "Runtime.evaluate" && command
+          ? [[sessionId, JSON.parse(command[1]!), JSON.parse(command[2]!)]]
+          : [];
+      });
+
+    await guest.send("Input.insertText", { text: 'secret "quoted"' });
+    // ControlOrMeta+A, then Backspace, as Playwright presses them.
+    await guest.send("Input.dispatchKeyEvent", {
+      type: "rawKeyDown",
+      key: "Control",
+      modifiers: 2,
+    });
+    await guest.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "a", modifiers: 2 });
+    await guest.send("Input.dispatchKeyEvent", { type: "keyUp", key: "a", modifiers: 2 });
+    await guest.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Backspace" });
+    await guest.send("Input.dispatchKeyEvent", { type: "keyDown", key: "x", text: "x" });
+    await expect(
+      guest.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", text: "\r" }),
+    ).rejects.toThrow(/only text, Backspace, Delete and select-all/);
+
+    expect(edits()).toEqual([
+      ["frame-session", "insertText", 'secret "quoted"'],
+      ["frame-session", "selectAll", ""],
+      ["frame-session", "delete", ""],
+      ["frame-session", "insertText", "x"],
+    ]);
+    expect(guest.webContents.insertText).not.toHaveBeenCalled();
+    expect(guest.webContents.sendInputEvent).not.toHaveBeenCalled();
+    expect(guest.sendCommand.mock.calls.map(([method]) => method)).not.toContain(
+      "Input.insertText",
+    );
+  });
+});
+
+describe("preview guest pointer routing", () => {
+  it("sends a press over a cross-site frame to its session, and its release after it", async () => {
+    const sent: Array<[string, Record<string, unknown>, string | undefined]> = [];
+    const debuggee = {
+      sendCommand: async (
+        method: string,
+        params: Record<string, unknown> & { expression?: string },
+        sessionId?: string,
+      ) => {
+        sent.push([method, params, sessionId]);
+        if (method === "DOM.describeNode") return { node: { frameId: "cross-site-frame" } };
+        if (method !== "Runtime.evaluate" || sessionId !== undefined) return {};
+        // The page's document finds the frame element; its content starts at (10, 100).
+        const point = /\(([\d.]+), ([\d.]+), true\)$/.exec(params.expression ?? "");
+        return point
+          ? { result: { value: [Number(point[1]) - 10, Number(point[2]) - 100] } }
+          : { result: { objectId: "frame-element" } };
+      },
+    };
+    const send = (type: string, x: number, y: number) =>
+      sendPageCommand(
+        { focusedFrame: {} } as unknown as Electron.WebContents,
+        debuggee as unknown as Electron.Debugger,
+        "Input.dispatchMouseEvent",
+        { type, x, y, button: "left" },
+        undefined,
+        new Map([["cross-site-frame", "frame-session"]]),
+      );
+
+    await send("mousePressed", 60, 150);
+    // Released outside the frame, as a drag ends; the frame that took the press still gets it.
+    await send("mouseReleased", 500, 500);
+    expect(sent.filter(([method]) => method === "Input.dispatchMouseEvent")).toEqual([
+      [
+        "Input.dispatchMouseEvent",
+        { type: "mousePressed", x: 50, y: 50, button: "left" },
+        "frame-session",
+      ],
+      [
+        "Input.dispatchMouseEvent",
+        { type: "mouseReleased", x: 490, y: 400, button: "left" },
+        "frame-session",
+      ],
+    ]);
   });
 });
 

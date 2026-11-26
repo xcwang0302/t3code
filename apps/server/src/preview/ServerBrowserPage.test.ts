@@ -360,7 +360,7 @@ describe("server browser element refs", () => {
 
   it("targets iframe input refs and preserves the parent form", async () => {
     await page.setContent(
-      '<input aria-label="parent"><iframe srcdoc="<input aria-label=child>"></iframe>',
+      '<input aria-label="parent"><iframe srcdoc="<input aria-label=child value=old>"></iframe>',
     );
     await page.frameLocator("iframe").getByRole("textbox").waitFor();
     const result = await takeSnapshot();
@@ -373,6 +373,25 @@ describe("server browser element refs", () => {
       "inside iframe",
     );
     expect(await page.getByRole("textbox", { name: "parent" }).inputValue()).toBe("");
+  });
+
+  it("clears located fields without fill, so a rejected keystroke fails at once", async () => {
+    await page.setContent(
+      '<input id="text" value="old"><div id="rich" contenteditable>old</div><input id="date" type="date" value="2020-01-01">',
+    );
+    await ServerBrowserPage.type(page, { locator: "#rich", text: "new", clear: true });
+    expect(await page.locator("#rich").textContent()).toBe("new");
+    await ServerBrowserPage.type(page, { locator: "#text", text: "", clear: true });
+    expect(await page.locator("#text").inputValue()).toBe("");
+    await ServerBrowserPage.type(page, { locator: "#date", text: "2026-11-25", clear: true });
+    expect(await page.locator("#date").inputValue()).toBe("2026-11-25");
+    // As a desktop tab refuses text for a cross-site frame it cannot reach.
+    using _rejected = vi
+      .spyOn(page.keyboard, "insertText")
+      .mockRejectedValue(new Error("rejected keystroke"));
+    await expect(
+      ServerBrowserPage.type(page, { locator: "#text", text: "x", clear: true }),
+    ).rejects.toThrow("rejected keystroke");
   });
 
   it("types after a click by coordinates into a shadow-root field, and refuses a field inside an editable frame", async () => {

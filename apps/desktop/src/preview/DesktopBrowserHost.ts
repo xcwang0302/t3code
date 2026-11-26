@@ -83,6 +83,8 @@ interface AttachedTab {
   focusReleasing: boolean;
   /** The sessions sharing the guest's one Chromium screencast; it stops with the last of them. */
   readonly screencasts: Map<string | undefined, { started: boolean; pending: number }>;
+  /** The debugger session Chromium attached for each cross-site frame, by frame id. */
+  readonly frameSessions: Map<string, string>;
   readonly onMessage: (
     event: Electron.Event,
     method: string,
@@ -243,16 +245,17 @@ export const make = Effect.gen(function* () {
   };
 
   /**
-   * Electron composites no offscreen guest, so its screenshot or screencast waits for a frame
-   * that never comes. The client paints the guest behind the app while one is pending; the
-   * capture then finishes on its own, and the guest goes back offscreen once none is.
+   * Electron composites no offscreen guest, so a capture, or an agent action waiting for the page
+   * to settle, waits for a frame that never comes. The client paints the guest behind the app
+   * while one is pending or the agent drives it in a running turn, then puts it back offscreen.
    */
   const syncPainting = (tab: AttachedTab) => {
     const active =
       tabs.get(keyOf(tab.key)) === tab &&
       (tab.screencasts.size > 0 ||
         tab.capturing.size > 0 ||
-        tab.waitingScreenshots.some((waiting) => waiting.live()));
+        tab.waitingScreenshots.some((waiting) => waiting.live()) ||
+        (tab.agentUsed && agentTurns.has(tab.key.threadId)));
     if (tab.painting === active) return;
     tab.painting = active;
     runFork(PubSub.publish(painting, { key: tab.key, active }));
@@ -342,6 +345,12 @@ export const make = Effect.gen(function* () {
    * may never settle; the turn's end ends every focus hold. The agent also sends on its own extra
    * session, so this cannot spare other sessions; a viewer's screencast still holds.
    */
+  /** The turn can start after the agent first drives its tab. */
+  const startAgentTurn = (threadId: string) => {
+    agentTurns.add(threadId);
+    for (const tab of tabs.values()) if (tab.key.threadId === threadId) syncPainting(tab);
+  };
+
   const endAgentTurn = (threadId: string) => {
     agentTurns.delete(threadId);
     for (const tab of tabs.values()) {
@@ -357,7 +366,14 @@ export const make = Effect.gen(function* () {
     if (tab.relay) return tab.relay;
     const { webContents, debugger: debuggee, cookiesCleared } = tab.debuggee;
     const send = async (method: string, params: Record<string, unknown>, sessionId?: string) => {
-      const result = await sendPageCommand(webContents, debuggee, method, params, sessionId);
+      const result = await sendPageCommand(
+        webContents,
+        debuggee,
+        method,
+        params,
+        sessionId,
+        tab.frameSessions,
+      );
       if (method === "Network.clearBrowserCookies") await cookiesCleared?.();
       return result;
     };
@@ -387,6 +403,7 @@ export const make = Effect.gen(function* () {
             if (owner === undefined || !streamingOwners.has(owner)) {
               tab.agentUsed = true;
               tab.agentLedAt = performance.now();
+              syncPainting(tab);
             } else if (method.startsWith("Input.") && !POINTER_TRAVEL.has(params["type"])) {
               tab.agentLedAt = Number.NEGATIVE_INFINITY;
             }
@@ -541,10 +558,28 @@ export const make = Effect.gen(function* () {
       agentUsed: false,
       focusReleasing: false,
       screencasts: new Map(),
+      frameSessions: new Map(),
       onMessage: (_event, method, params, sessionId) => {
         if (method === "Page.downloadWillBegin") {
           const guid = (params as { guid?: unknown } | undefined)?.guid;
           tab.pendingDownloadGuid = typeof guid === "string" ? guid : null;
+        } else if (method === "Target.attachedToTarget") {
+          const attached = params as {
+            sessionId?: unknown;
+            targetInfo?: { targetId?: unknown; type?: unknown };
+          };
+          if (
+            attached.targetInfo?.type === "iframe" &&
+            typeof attached.targetInfo.targetId === "string" &&
+            typeof attached.sessionId === "string"
+          ) {
+            tab.frameSessions.set(attached.targetInfo.targetId, attached.sessionId);
+          }
+        } else if (method === "Target.detachedFromTarget") {
+          const detached = (params as { sessionId?: unknown } | undefined)?.sessionId;
+          for (const [frameId, frameSession] of tab.frameSessions) {
+            if (frameSession === detached) tab.frameSessions.delete(frameId);
+          }
         }
         tab.relay?.event(method, params, sessionId);
       },
@@ -636,7 +671,7 @@ export const make = Effect.gen(function* () {
       const command = decodeCommand(line);
       if (Option.isNone(command)) return;
       if (command.value.type === "turn") {
-        if (command.value.active) agentTurns.add(command.value.threadId);
+        if (command.value.active) startAgentTurn(command.value.threadId);
         else endAgentTurn(command.value.threadId);
         return;
       }
