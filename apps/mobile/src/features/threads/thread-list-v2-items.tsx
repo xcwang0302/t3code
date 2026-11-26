@@ -497,19 +497,21 @@ export const ThreadListV2FolderHeader = memo(function ThreadListV2FolderHeader(p
   const choiceActions = (
     by: "branch" | "worktree",
     values: ReadonlyArray<string>,
-    format: (value: string) => string = (value) => value,
+    format?: (value: string) => string,
   ) =>
     values.length === 0
       ? [
           {
             id: `collect:${by}:none`,
-            title: format(gt("None yet", { $context: "no branches or worktrees to offer" })),
+            title: format
+              ? format(gt("None yet", { $context: "no branches or worktrees to offer" }))
+              : gt("None yet", { $context: "no branches or worktrees to offer" }),
             attributes: { disabled: true },
           },
         ]
       : values.map((value) => ({
           id: `collect:${by}:${value}`,
-          title: format(value),
+          title: format ? format(value) : value,
           state: (by === "branch" ? collect.branches : collect.worktrees).includes(value)
             ? ("on" as const)
             : ("off" as const),

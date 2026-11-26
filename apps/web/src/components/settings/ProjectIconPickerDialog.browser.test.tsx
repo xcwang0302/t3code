@@ -17,7 +17,7 @@ it("Escape in the icon search clears it without closing the dialog", async () =>
       onSelect={() => {}}
     />,
   );
-  const search = page.getByRole("searchbox", { name: "Search Lucide icons" });
+  const search = page.getByRole("searchbox", { name: "Search icons" });
   await expect.element(search).toHaveAttribute("type", "text");
   await userEvent.fill(search, "rocket");
   for (const composition of [
