@@ -4,6 +4,7 @@ import { lucideIconByName } from "./lib/lucideIconByName";
 import {
   filterProjectIconNames,
   firstEmoji,
+  isValidProjectMonogram,
   MAX_ICON_RESULTS,
   PROJECT_ICON_CATEGORIES,
 } from "./projectIconOptions";
@@ -36,5 +37,16 @@ describe("projectIconOptions", () => {
     expect(firstEmoji("1️⃣ project")).toBe("1️⃣");
     expect(firstEmoji("plain text")).toBeNull();
     expect(firstEmoji("👨‍👩‍👧‍👦".repeat(2))).toBe("👨‍👩‍👧‍👦");
+  });
+
+  it("allows monograms of at most two characters", () => {
+    for (const [text, valid] of [
+      ["T", true],
+      ["T3", true],
+      ["E\u0301E\u0301", true],
+      ["ABC", false],
+    ] as const) {
+      expect(isValidProjectMonogram(text), text).toBe(valid);
+    }
   });
 });
