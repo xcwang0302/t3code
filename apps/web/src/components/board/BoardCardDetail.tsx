@@ -1,7 +1,7 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { BoardColumn, BoardMutation, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { useGT, useMessages } from "gt-react";
 import {
   ArchiveIcon,

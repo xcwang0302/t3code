@@ -9,6 +9,8 @@ import { lucideIconNames } from "./lib/lucideIconByName";
 import { deriveProjectIdentity } from "./projectIdentity";
 export { PROJECT_ICON_COLORS, projectIconColorClassName } from "./projectIconColors";
 
+const isProjectMonogramText = Schema.is(ProjectMonogramText);
+
 export const PROJECT_ICON_CATEGORIES: ReadonlyArray<{
   readonly label: string;
   readonly icons: ReadonlyArray<string>;
@@ -270,6 +272,13 @@ export const PROJECT_EMOJI_CATEGORIES: ReadonlyArray<{
 
 const MAX_EMOJI_LENGTH = 32;
 
+// The server also rejects monograms longer than two graphemes (ProjectCommands.ts).
+export function isValidProjectMonogram(text: string): boolean {
+  if (!isProjectMonogramText(text)) return false;
+  const segments = new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text);
+  return Array.from(segments).length <= 2;
+}
+
 export function firstEmoji(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -288,7 +297,6 @@ export function firstEmoji(value: string): string | null {
 }
 
 const DEFAULT_ICON = "folder-code";
-const isMonogramText = Schema.is(ProjectMonogramText);
 
 export interface ProjectIconDraft {
   readonly mode: ProjectIconOverride["kind"];
@@ -321,5 +329,5 @@ export function projectIconFromDraft(draft: ProjectIconDraft): ProjectIconOverri
   if (draft.mode === "lucide") return { kind: "lucide", name: draft.iconName, color: draft.color };
   if (draft.mode === "emoji") return { kind: "emoji", emoji: draft.emoji };
   const text = normalizeMonogram(draft.letters);
-  return isMonogramText(text) ? { kind: "monogram", text, color: draft.color } : null;
+  return isValidProjectMonogram(text) ? { kind: "monogram", text, color: draft.color } : null;
 }

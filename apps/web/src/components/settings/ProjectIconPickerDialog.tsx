@@ -143,15 +143,23 @@ function LucideIconPane({
         <InputGroupAddon>
           <SearchIcon aria-hidden />
         </InputGroupAddon>
+        {/* Native search inputs clear on Escape even during IME composition. */}
         <InputGroupInput
-          type="search"
+          type="text"
+          role="searchbox"
           value={query}
           aria-label={gt("Search icons")}
           placeholder={gt("Search all icons")}
           autoComplete="off"
           onChange={(event) => setQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && icons[0]) {
+            // Enter and Escape confirm or cancel an IME candidate while composing.
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Escape") {
+              if (!query && !event.repeat) return;
+              event.stopPropagation();
+              setQuery("");
+            } else if (event.key === "Enter" && icons[0]) {
               event.preventDefault();
               select(icons[0]);
             } else if (event.key === "ArrowDown") {

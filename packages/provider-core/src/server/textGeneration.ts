@@ -10,6 +10,7 @@ import type * as Effect from "effect/Effect";
 
 import type { TextGenerationPolicy } from "./textGenerationPolicy.ts";
 import type {
+  ChangeProducer,
   ThreadFolderClassificationOutput,
   ThreadTitleForkSource,
 } from "./textGenerationPrompts.ts";
@@ -40,6 +41,7 @@ export interface PrContentGenerationInput {
   diffPatch: string;
   changeRequestTemplate?: string | undefined;
   threadContext?: string | undefined;
+  producedBy?: ReadonlyArray<ChangeProducer> | undefined;
   policy?: TextGenerationPolicy | undefined;
   modelSelection: ModelSelection;
   projectId?: ProjectId | null | undefined;
@@ -106,7 +108,10 @@ export interface ReviewGuideStackLayer {
 }
 
 export interface ReviewGuideGenerationInput {
+  /** A scratch checkout of the pull request's head. */
   cwd: string;
+  /** The project folder the checkout was made from; the user's own relative paths resolve here. */
+  projectCwd: string;
   number: number;
   title: string;
   description: string;

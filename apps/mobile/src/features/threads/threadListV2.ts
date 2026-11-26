@@ -812,7 +812,8 @@ export function buildThreadListV2ListItems(input: {
       expanded: input.workingShelfExpanded === true,
       disabled: shelfDisabled,
     });
-    pushRange(foldersAt("working"), workingShelfHeaderIndex, workingEnd);
+    // Folders never sit on the Working shelf: a folder stays put while its threads work.
+    pushRange([], workingShelfHeaderIndex, workingEnd);
   }
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
     result.push({
@@ -1143,7 +1144,6 @@ export function buildThreadListV2Items(input: {
   const snoozedThreads = new Set(snoozed);
   const settledThreads = new Set(settled);
   const pinnedThreads = new Set(pinned);
-  const workingThreads = new Set(working);
   const folderHeaders: Array<ThreadListV2FolderHeaderListItem & { readonly index: number }> = [];
   type FolderBlock = (typeof folderLayout.blocks)[number];
   const placementOf = (block: FolderBlock) =>
@@ -1155,9 +1155,7 @@ export function buildThreadListV2Items(input: {
             ? "settled"
             : pinnedThreads.has(thread)
               ? "pinned"
-              : workingThreads.has(thread)
-                ? "working"
-                : "active",
+              : "active",
       ),
       { folderPinned: block.folder.pinnedAt != null },
     );
@@ -1254,7 +1252,7 @@ export function buildThreadListV2Items(input: {
       });
     }
   };
-  const pushShelfFolders = (placement: "working" | "snoozed" | "settled") => {
+  const pushShelfFolders = (placement: "snoozed" | "settled") => {
     for (const block of blocksAt(placement)) {
       if (
         shelfExpanded[placement] ||
@@ -1264,12 +1262,11 @@ export function buildThreadListV2Items(input: {
       }
     }
   };
-  const shelfFolderCount = (placement: "working" | "snoozed" | "settled") =>
+  const shelfFolderCount = (placement: "snoozed" | "settled") =>
     blocksAt(placement).reduce((total, block) => total + block.threads.length, 0);
   for (const block of blocksAt("open")) pushFolder(block);
-  const workingCount = orderedWorking.length + shelfFolderCount("working");
+  const workingCount = orderedWorking.length;
   const workingShelfHeaderIndex = workingCount > 0 ? items.length : null;
-  pushShelfFolders("working");
   for (const thread of visibleWorking) {
     items.push({
       thread,
